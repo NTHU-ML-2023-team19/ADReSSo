@@ -48,6 +48,7 @@ training_args = TrainingArguments(
     output_dir="models/" + MODEL_NAME[MODEL_NAME.index("/") + 1 :] + "_ADReSSo",
     evaluation_strategy="epoch",
     save_strategy="epoch",
+    save_total_limit=1,
     learning_rate=3e-5,
     per_device_train_batch_size=32,
     gradient_accumulation_steps=4,
