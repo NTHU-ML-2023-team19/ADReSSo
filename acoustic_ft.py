@@ -19,9 +19,13 @@ warnings.filterwarnings("ignore")
 
 MODEL_NAME = sys.argv[1] if len(sys.argv) > 1 else "facebook/wav2vec2-base"
 
-dataset = load_dataset("nevikw39/ADReSSo").cast_column(
-    "audio", Audio(sampling_rate=16_000)
+dataset = (
+    load_dataset("nevikw39/ADReSSo")
+    .shuffle()
+    .cast_column("audio", Audio(sampling_rate=16_000))
 )
+dataset["train"], dataset["valid"] = dataset["train"].train_test_split(0.1).values()
+
 feature_extractor = AutoFeatureExtractor.from_pretrained(MODEL_NAME)
 
 encoded_dataset = dataset.map(
@@ -45,6 +49,7 @@ model = AutoModelForAudioClassification.from_pretrained(
 )
 
 accuracy = evaluate.load("accuracy")
+f1 = evaluate.load("f1")
 
 training_args = TrainingArguments(
     output_dir="models/" + MODEL_NAME[MODEL_NAME.index("/") + 1 :] + "_ADReSSo",
@@ -60,17 +65,22 @@ training_args = TrainingArguments(
     logging_steps=10,
     load_best_model_at_end=True,
     metric_for_best_model="accuracy",
-    # push_to_hub=True,
-    # hub_private_repo=True,
+    push_to_hub_organization="NTHU-ML-2023-team19",
+    push_to_hub=True,
+    hub_private_repo=True,
 )
 
 trainer = Trainer(
     model=model,
     args=training_args,
     train_dataset=encoded_dataset["train"],
-    eval_dataset=encoded_dataset["test"],
+    eval_dataset=encoded_dataset["valid"],
     tokenizer=feature_extractor,
     compute_metrics=lambda eval_pred: accuracy.compute(
+        predictions=np.argmax(eval_pred.predictions, axis=1),
+        references=eval_pred.label_ids,
+    )
+    | f1.compute(
         predictions=np.argmax(eval_pred.predictions, axis=1),
         references=eval_pred.label_ids,
     ),
@@ -80,4 +90,4 @@ trainer = Trainer(
 trainer.train()
 trainer.evaluate(encoded_dataset["test"])
 trainer.save_model("models/" + MODEL_NAME[MODEL_NAME.index("/") + 1 :] + "_ADReSSo")
-# trainer.push_to_hub()
+trainer.push_to_hub()
