@@ -1,6 +1,6 @@
 #!/home/nevikw/miniconda3/envs/ml-project/bin/python
 
-import sys
+import argparse
 import warnings
 
 from datasets import load_dataset, Audio
@@ -17,21 +17,27 @@ import numpy as np
 
 warnings.filterwarnings("ignore")
 
-MODEL_NAME = sys.argv[1] if len(sys.argv) > 1 else "facebook/wav2vec2-base"
+ap = argparse.ArgumentParser()
+ap.add_argument("-m", "--base-model", type=str, default="facebook/wav2vec2-base")
+ap.add_argument("-d", "--sample-duration", type=int, default=30)
+ap.add_argument("-b", "--batch", type=int, default=8)
+ap.add_argument("-g", "--grad-accu-step", type=int, default=4)
 
-dataset = (
-    load_dataset("nevikw39/ADReSSo")
-    .shuffle()
-    .cast_column("audio", Audio(sampling_rate=16_000))
+args = ap.parse_args()
+
+dataset = load_dataset("nevikw39/ADReSSo").cast_column(
+    "audio", Audio(sampling_rate=16_000)
 )
-dataset["train"], dataset["valid"] = dataset["train"].train_test_split(0.1).values()
+dataset["train"], dataset["valid"] = dataset["train"].train_test_split(0.25).values()
 
-feature_extractor = AutoFeatureExtractor.from_pretrained(MODEL_NAME)
+feature_extractor = AutoFeatureExtractor.from_pretrained(args.base_model)
 
 encoded_dataset = dataset.map(
     lambda examples: feature_extractor(
         [x["array"] for x in examples["audio"]],
         sampling_rate=feature_extractor.sampling_rate,
+        max_length=16_000*args.sample_duration,
+        truncation=True,
     ),
     remove_columns="audio",
     batched=True,
@@ -45,21 +51,21 @@ for i, label in enumerate(labels):
     id2label[str(i)] = label
 
 model = AutoModelForAudioClassification.from_pretrained(
-    MODEL_NAME, num_labels=num_labels, label2id=label2id, id2label=id2label
+    args.base_model, num_labels=num_labels, label2id=label2id, id2label=id2label
 )
 
 accuracy = evaluate.load("accuracy")
 f1 = evaluate.load("f1")
 
 training_args = TrainingArguments(
-    output_dir="models/" + MODEL_NAME[MODEL_NAME.index("/") + 1 :] + "_ADReSSo",
+    output_dir="models/" + args.base_model[args.base_model.index("/") + 1 :] + "_ADReSSo",
     evaluation_strategy="epoch",
     save_strategy="epoch",
     save_total_limit=1,
     learning_rate=3e-5,
-    per_device_train_batch_size=16,
-    gradient_accumulation_steps=2,
-    per_device_eval_batch_size=32,
+    per_device_train_batch_size=args.batch,
+    gradient_accumulation_steps=args.grad_accu_step,
+    per_device_eval_batch_size=args.batch,
     num_train_epochs=100,
     warmup_ratio=0.1,
     logging_steps=10,
@@ -89,5 +95,5 @@ trainer = Trainer(
 
 trainer.train()
 trainer.evaluate(encoded_dataset["test"])
-trainer.save_model("models/" + MODEL_NAME[MODEL_NAME.index("/") + 1 :] + "_ADReSSo")
+trainer.save_model("models/" + args.base_model[args.base_model.index("/") + 1 :] + "_ADReSSo")
 trainer.push_to_hub()
