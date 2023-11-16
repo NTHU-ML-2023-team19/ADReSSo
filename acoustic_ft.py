@@ -20,7 +20,7 @@ warnings.filterwarnings("ignore")
 ap = argparse.ArgumentParser()
 ap.add_argument("-m", "--base-model", type=str, default="facebook/wav2vec2-base")
 ap.add_argument("-d", "--sample-duration", type=int, default=30)
-ap.add_argument("-b", "--batch", type=int, default=8)
+ap.add_argument("-b", "--batch-size", type=int, default=8)
 ap.add_argument("-g", "--grad-accu-step", type=int, default=4)
 
 args = ap.parse_args()
@@ -56,6 +56,7 @@ model = AutoModelForAudioClassification.from_pretrained(
 
 accuracy = evaluate.load("accuracy")
 f1 = evaluate.load("f1")
+specificity = evaluate.load("recall") # Specificity is actually recall of the negative class
 
 training_args = TrainingArguments(
     output_dir="models/" + args.base_model[args.base_model.index("/") + 1 :] + "_ADReSSo",
@@ -63,9 +64,9 @@ training_args = TrainingArguments(
     save_strategy="epoch",
     save_total_limit=1,
     learning_rate=3e-5,
-    per_device_train_batch_size=args.batch,
+    per_device_train_batch_size=args.batch_size,
     gradient_accumulation_steps=args.grad_accu_step,
-    per_device_eval_batch_size=args.batch,
+    per_device_eval_batch_size=args.batch_size,
     num_train_epochs=100,
     warmup_ratio=0.1,
     logging_steps=10,
@@ -85,10 +86,13 @@ trainer = Trainer(
     compute_metrics=lambda eval_pred: accuracy.compute(
         predictions=np.argmax(eval_pred.predictions, axis=1),
         references=eval_pred.label_ids,
-    )
-    | f1.compute(
+    ) | f1.compute(
         predictions=np.argmax(eval_pred.predictions, axis=1),
         references=eval_pred.label_ids,
+    ) | specificity.compute(
+        predictions=np.argmax(eval_pred.predictions, axis=1),
+        references=eval_pred.label_ids,
+        pos_label=0,
     ),
     callbacks=[EarlyStoppingCallback(10)],
 )
