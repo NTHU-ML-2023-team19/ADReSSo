@@ -1,6 +1,7 @@
 #!/home/nevikw/miniconda3/envs/ml-project/bin/python
 
 import argparse
+from random import randint
 import warnings
 
 from datasets import load_dataset, Audio
@@ -34,10 +35,10 @@ feature_extractor = AutoFeatureExtractor.from_pretrained(args.base_model)
 
 encoded_dataset = dataset.map(
     lambda examples: feature_extractor(
-        [x["array"] for x in examples["audio"]],
+        [x["array"][(y := randint(0, len(x["array"]) - (z := min(len(x["array"]), 16_000*args.sample_duration)))) : y + z] for x in examples["audio"]],
         sampling_rate=feature_extractor.sampling_rate,
-        max_length=16_000*args.sample_duration,
-        truncation=True,
+        # max_length=16_000*args.sample_duration,
+        # truncation=True,
     ),
     remove_columns="audio",
     batched=True,
@@ -60,13 +61,15 @@ specificity = evaluate.load("recall") # Specificity is actually recall of the ne
 
 training_args = TrainingArguments(
     output_dir="models/" + args.base_model[args.base_model.index("/") + 1 :] + "_ADReSSo",
+    # fp16=True,
     evaluation_strategy="epoch",
     save_strategy="epoch",
     save_total_limit=1,
     learning_rate=3e-5,
     per_device_train_batch_size=args.batch_size,
-    gradient_accumulation_steps=args.grad_accu_step,
     per_device_eval_batch_size=args.batch_size,
+    gradient_accumulation_steps=args.grad_accu_step,
+    # gradient_checkpointing=True,
     num_train_epochs=100,
     warmup_ratio=0.1,
     logging_steps=10,
