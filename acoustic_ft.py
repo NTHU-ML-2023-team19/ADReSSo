@@ -101,6 +101,6 @@ trainer = Trainer(
 )
 
 trainer.train()
-trainer.evaluate(encoded_dataset["test"])
+print(trainer.evaluate(encoded_dataset["test"]))
 trainer.save_model("models/" + args.base_model[args.base_model.index("/") + 1 :] + "_ADReSSo")
 trainer.push_to_hub()
