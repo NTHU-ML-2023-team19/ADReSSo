@@ -18,13 +18,13 @@ import numpy as np
 from sklearn.metrics import mean_squared_error
 
 
-warnings.filterwarnings("ignore")
+# warnings.filterwarnings("ignore")
 
 ap = ArgumentParser()
-ap.add_argument("-m", "--base-model", type=str, default="openai/whisper-medium")
+ap.add_argument("-m", "--base-model", type=str, default="openai/whisper-large-v3")
 ap.add_argument("-d", "--sample-duration", type=int, default=30)
-ap.add_argument("-b", "--batch-size", type=int, default=4)
-ap.add_argument("-g", "--grad-accu-step", type=int, default=8)
+ap.add_argument("-b", "--batch-size", type=int, default=8)
+ap.add_argument("-g", "--grad-accu-step", type=int, default=4)
 
 args = ap.parse_args()
 
@@ -43,13 +43,13 @@ dataset = (
 )
 dataset["train"], dataset["valid"] = dataset["train"].train_test_split(.25).values()
 
-trains = []
-for i in dataset["train"]:
-    n = (len(i["audio"]["array"]) + feature_extractor.sampling_rate * args.sample_duration - 1) // (feature_extractor.sampling_rate * args.sample_duration)
-    for j in np.array_split(i["audio"]["array"], n):
-        trains.append(deepcopy(i))
-        trains[-1]["audio"]["array"] = j
-dataset["train"] = Dataset.from_list(trains, dataset["train"].features, dataset["train"].info)
+# trains = []
+# for i in dataset["train"]:
+#     n = (len(i["audio"]["array"]) + feature_extractor.sampling_rate * args.sample_duration - 1) // (feature_extractor.sampling_rate * args.sample_duration)
+#     for j in np.array_split(i["audio"]["array"], n):
+#         trains.append(deepcopy(i))
+#         trains[-1]["audio"]["array"] = j
+# dataset["train"] = Dataset.from_list(trains, dataset["train"].features, dataset["train"].info)
 
 mean = np.mean(dataset["train"]["mmse"])
 std = np.std(dataset["train"]["mmse"])
@@ -74,7 +74,8 @@ training_args = TrainingArguments(
     per_device_train_batch_size=args.batch_size,
     per_device_eval_batch_size=args.batch_size*2,
     gradient_accumulation_steps=args.grad_accu_step,
-    # gradient_checkpointing=True,
+    gradient_checkpointing=True,
+    gradient_checkpointing_kwargs={"use_reentrant": False},
     num_train_epochs=100,
     warmup_ratio=.05,
     logging_steps=10,
@@ -89,18 +90,13 @@ training_args = TrainingArguments(
 trainer = Trainer(
     model=model,
     args=training_args,
-    train_dataset=encoded_dataset["train"].shuffle(),
+    train_dataset=encoded_dataset["train"],
     eval_dataset=encoded_dataset["valid"],
     tokenizer=feature_extractor,
-    # compute_metrics=lambda eval_pred: mse.compute(
-    #     predictions=eval_pred.predictions,
-    #     references=eval_pred.label_ids,
-    #     squared=False
-    # ),
     compute_metrics=lambda eval_pred: {
         "rmse": mean_squared_error(eval_pred.label_ids, eval_pred.predictions, squared=False) * std,
     },
-    callbacks=[EarlyStoppingCallback(10)],
+    callbacks=[EarlyStoppingCallback(10, .01)],
 )
 
 trainer.train()
@@ -110,4 +106,7 @@ print(trainer.evaluate(encoded_dataset["test"]))
 trainer.save_model("models/" + args.base_model[args.base_model.index('/') + 1 :] + "_ADReSSo-MMSE")
 trainer.push_to_hub()
 
-encoded_dataset.cleanup_cache_files()
+try:
+    encoded_dataset.cleanup_cache_files()
+except Exception as e:
+    print(e)
