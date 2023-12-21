@@ -2,12 +2,9 @@
 
 from argparse import ArgumentParser
 from warnings import filterwarnings
-from os import environ
 
-import torch
 from datasets import load_dataset
 from transformers import (
-    pipeline,
     AutoTokenizer,
     AutoModelForSequenceClassification,
     DataCollatorWithPadding,
@@ -27,16 +24,14 @@ import numpy as np
 filterwarnings("ignore")
 
 ap = ArgumentParser()
-ap.add_argument("-a", "--acoustic-model", type=str, default="openai/whisper-large-v3")
-ap.add_argument("-l", "--linguistic-model", type=str, default="bert-large-uncased")
-ap.add_argument("-d", "--sample-duration", type=int, default=30)
-ap.add_argument("-b", "--batch-size", type=int, default=8)
-ap.add_argument("-g", "--grad-accu-step", type=int, default=4)
+ap.add_argument("-m", "--model", type=str, default="bert-large-uncased")
+ap.add_argument("-c", "--chunked", type=bool, default=False)
+ap.add_argument("-b", "--batch-size", type=int, default=16)
+ap.add_argument("-g", "--grad-accu-step", type=int, default=2)
 
 args = ap.parse_args()
 
-transcriber = pipeline(model=args.acoustic_model, device=int(environ["LOCAL_RANK"]), batch_size=32)
-tokenizer = AutoTokenizer.from_pretrained(args.linguistic_model, trust_remote_code=True, use_fast=False)
+tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True, use_fast=False)
 
 if tokenizer.pad_token is None:
     tokenizer.add_special_tokens({'pad_token': '[PAD]'})
@@ -44,18 +39,15 @@ if tokenizer.pad_token is None:
 data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
 
 preprocess = lambda examples: tokenizer(
-    [i["text"] for i in transcriber(examples["audio"], chunk_length_s=args.sample_duration)],
+    examples[f"transcript_{'' if args.chunked else 'no-'}chunked"],
     truncation=True,
     return_token_type_ids=False,
 )
 
-dataset = load_dataset("nevikw39/ADReSSo")
+dataset = load_dataset("nevikw39/ADReSSo_whisper-large-v3_transcript")
 dataset["train"], dataset["valid"] = dataset["train"].train_test_split(.25).values()
 
-encoded_dataset = dataset.map(preprocess, remove_columns=["audio", "mmse"], batched=True)
-
-del transcriber
-torch.cuda.empty_cache()
+encoded_dataset = dataset.map(preprocess, remove_columns=["transcript_no-chunked", "transcript_chunked", "mmse"], batched=True)
 
 labels = dataset["train"].features["label"].names
 num_labels = len(labels)
@@ -65,7 +57,7 @@ for i, label in enumerate(labels):
     id2label[str(i)] = label
 
 model = AutoModelForSequenceClassification.from_pretrained(
-    args.linguistic_model, num_labels=num_labels, label2id=label2id, id2label=id2label, trust_remote_code=True, ignore_mismatched_sizes=True #, torch_dtype=torch.float16
+    args.model, num_labels=num_labels, label2id=label2id, id2label=id2label, trust_remote_code=True, ignore_mismatched_sizes=True #, torch_dtype=torch.float16
 )
 
 # lora_config = LoraConfig(task_type=TaskType.SEQ_CLS, lora_dropout=.1)
@@ -76,7 +68,7 @@ f1 = evaluate.load("f1")
 specificity = evaluate.load("nevikw39/specificity")
 
 training_args = TrainingArguments(
-    output_dir="models/" + args.linguistic_model[args.linguistic_model.find('/') + 1 :] + "_ADReSSo",
+    output_dir="models/" + args.model[args.model.find('/') + 1 :] + "_ADReSSo",
     evaluation_strategy="epoch",
     save_strategy="epoch",
     save_total_limit=1,
@@ -122,5 +114,5 @@ trainer.train()
 
 print(trainer.evaluate(encoded_dataset["test"]))
 
-trainer.save_model("models/" + args.linguistic_model[args.linguistic_model.find('/') + 1 :] + "_ADReSSo")
+trainer.save_model("models/" + args.model[args.model.find('/') + 1 :] + "_ADReSSo")
 trainer.push_to_hub()
