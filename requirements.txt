@@ -23,7 +23,7 @@ datasets==2.14.6
 decorator==5.1.1
 dill==0.3.7
 evaluate==0.4.1
-fastapi==0.104.1
+fastapi==0.109.1
 ffmpy==0.3.1
 filelock==3.13.1
 fonttools==4.44.3
